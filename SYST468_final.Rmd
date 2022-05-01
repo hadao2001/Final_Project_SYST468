@@ -22,6 +22,20 @@ library(dplyr)
 library(ISLR)
 library(MASS)
 library(class)
+library(gridExtra)
+library(patchwork)
+library(randomForest)
+library(caret)
+library(pROC)
+library(xgboost)
+library(gbm)        
+library(rpart)
+library(party)
+library(partykit)
+library(rattle)
+library(rpart.plot)
+library(e1071)       #for calculating variable importance
+library(ipred)       #for fitting bagged decision trees
 ```
 
 ## Download dataset
@@ -69,6 +83,15 @@ sort(colSums(is.na(coupon_rec)), decreasing = TRUE)
 cat("Missing value percentage\n")
 sort(colMeans(is.na(coupon_rec))*100, decreasing = TRUE)
 ```
+Columns with missing values are CoffeeHouse, Restaurant20To50, CarryAway, RestaurantLessThan20, Bar 
+
+__Car__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec <- subset(coupon_rec, select = -c(car) )
+
+coupon_rec <- na.omit(coupon_rec)           
+```
+Since the column 'car' has a significant amount of missing values (nearly 99%), we will drop this column.
 
 #### - Unique value:
 
@@ -82,6 +105,7 @@ coupon_rec %>%
   summarise(n = n()) %>%
   mutate(Freq = n/sum(n))
 
+coupon_rec$Y <- as.factor(coupon_rec$Y)
 ```
 
 __Occupation__
@@ -94,6 +118,486 @@ df1 <- coupon_rec %>%
   arrange(desc(Freq))
 
 as.data.frame(df1)
+dim(df1)
 ```
+
+__Time__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec$time<-format(as.POSIXct(coupon_rec$time,format='%I%p'),format="%H")
+coupon_rec$time <- as.numeric(coupon_rec$time)
+```
+
+__Expiration__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec$expiration[(coupon_rec$expiration=="2h")] <- 2
+coupon_rec$expiration[(coupon_rec$expiration=="1d")] <- 24
+coupon_rec$expiration <- as.numeric(coupon_rec$expiration) #or as.factor
+```
+
+__Age__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec %>%
+  group_by(age) %>%
+  summarise(n = n()) %>%
+  mutate(Freq = n/sum(n)) %>%
+  arrange(desc(Freq))
+
+#or as.factor
+coupon_rec$age <- factor(coupon_rec$age, levels = c("below21", "21", "26", "31", "36", "41", "46", "50plus"))
+```
+
+__Education__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec %>%
+  group_by(education) %>%
+  summarise(n = n()) %>%
+  mutate(Freq = n/sum(n)) %>%
+  arrange(desc(Freq))
+
+coupon_rec$education <- factor(coupon_rec$education, levels = c("Some High School", "High School Graduate", "Some college - no degree", "Associates degree", "Bachelors degree", "Graduate degree (Masters or Doctorate)"))
+```
+
+__Income__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec %>%
+  group_by(income) %>%
+  summarise(n = n()) %>%
+  mutate(Freq = n/sum(n)) %>%
+  arrange(desc(Freq))
+
+coupon_rec$income<- factor(coupon_rec$income, levels = c("Less than $12500", 
+                                                         "$12500 - $24999", 
+                                                         "$25000 - $37499", 
+                                                         "$37500 - $49999", 
+                                                         "$50000 - $62499", 
+                                                         "$62500 - $74999", 
+                                                         "$75000 - $87499", 
+                                                         "$87500 - $99999", 
+                                                         "$100000 or More"))
+
+```
+
+__Marital Status__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec$maritalStatus[which(coupon_rec$maritalStatus=="Married partner")] <- "Married"
+coupon_rec$maritalStatus[which(coupon_rec$maritalStatus=="Single partner")] <- "Single"
+coupon_rec$maritalStatus[which(coupon_rec$maritalStatus=="Unmarried partner")] <- "Unmarried"
+coupon_rec %>%
+  group_by(maritalStatus) %>%
+  summarise(n = n()) %>%
+  mutate(Freq = n/sum(n)) %>%
+  arrange(desc(Freq))
+
+coupon_rec$maritalStatus <- factor(coupon_rec$maritalStatus, levels = c("Single", "Unmarried", "Married", "Divorced", "Widowed"))
+```
+
+__Bar__
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec$Bar<- factor(coupon_rec$Bar, levels = c("never","less1","1~3","4~8","gt8"))
+coupon_rec$CoffeeHouse<- factor(coupon_rec$CoffeeHouse, levels = c("never","less1","1~3","4~8","gt8"))
+coupon_rec$CarryAway<- factor(coupon_rec$CarryAway, levels = c("never","less1","1~3","4~8","gt8"))
+coupon_rec$RestaurantLessThan20<- factor(coupon_rec$RestaurantLessThan20, levels = c("never","less1","1~3","4~8","gt8"))
+coupon_rec$Restaurant20To50<- factor(coupon_rec$Restaurant20To50, levels = c("never","less1","1~3","4~8","gt8"))
+```
+
+
+\newpage
+
+## Data Exploratory
+
+```{r , echo=FALSE, , message=FALSE}
+p1 <- ggplot(coupon_rec, aes(x=destination, fill=Y)) +
+    geom_bar(stat="count")
+
+g1 <- ggplot(coupon_rec, aes(x=destination, fill=Y)) +
+    geom_bar(position="fill")
+
+pg1 <- p1+g1+ plot_annotation(title = "Destination")
+
+```
+
+```{r , echo=FALSE, , message=FALSE}
+p2 <- ggplot(coupon_rec, aes(x=passanger, fill=Y)) +
+  geom_bar(stat="count")
+
+g2 <- ggplot(coupon_rec, aes(x=passanger, fill=Y)) +
+  geom_bar(position="fill")
+
+pg2 <- p2+g2+ plot_annotation(title = "Passanger")
+
+pg1
+pg2
+```
+
+
+```{r , echo=FALSE, , message=FALSE}
+p3 <- ggplot(coupon_rec, aes(x=weather, fill=Y)) +
+  geom_bar(stat="count")
+g3 <- ggplot(coupon_rec, aes(x=weather, fill=Y)) +
+  geom_bar(position="fill")
+pg3 <- p3+g3+ plot_annotation(title = "Weather")
+
+```
+
+```{r , echo=FALSE, , message=FALSE}
+p5 <- ggplot(coupon_rec, aes(x=gender, fill=Y)) +
+  geom_bar(stat="count")
+g5 <- ggplot(coupon_rec, aes(x=gender, fill=Y)) +
+  geom_bar(position="fill")
+pg5 <- p5+g5+ plot_annotation(title = "Gender")
+
+pg3
+pg5
+```
+
+
+```{r , echo=FALSE, , message=FALSE}
+p6 <- ggplot(coupon_rec, aes(x=maritalStatus, fill=Y)) +
+  geom_bar(stat="count")+
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+g6 <- ggplot(coupon_rec, aes(x=maritalStatus, fill=Y)) +
+  geom_bar(position="fill")+
+  theme(axis.text.x = element_text(angle = 15, hjust = 1))
+
+pg6 <- p6+g6+ plot_annotation(title = "maritalStatus")
+```
+
+
+```{r echo=FALSE}
+p7 <- ggplot(coupon_rec, aes(x=education, fill=Y)) +
+  geom_bar(stat="count")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+g7 <- ggplot(coupon_rec, aes(x=education, fill=Y)) +
+  geom_bar(position="fill")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+pg7 <- p7+g7+ plot_annotation(title = "Education")
+pg6
+pg7
+```
+
+
+```{r echo=FALSE}
+#occupation                                          
+p8 <- ggplot(coupon_rec, aes(x=occupation, fill=Y)) +
+  geom_bar(stat="count")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+g8 <- ggplot(coupon_rec, aes(x=occupation, fill=Y)) +
+  geom_bar(position="fill")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p8+ plot_annotation(title = "Occupation")
+g8
+```
+
+
+```{r echo=FALSE}
+p9 <- ggplot(coupon_rec, aes(x=Bar, fill=Y)) +
+  geom_bar(stat="count")
+g9 <- ggplot(coupon_rec, aes(x=Bar, fill=Y)) +
+  geom_bar(position="fill")
+pg9 <- p9+g9+ plot_annotation(title = "Bar")
+```
+
+
+```{r echo=FALSE}
+p10 <- ggplot(coupon_rec, aes(x=CoffeeHouse, fill=Y)) +
+  geom_bar(stat="count")
+g10 <- ggplot(coupon_rec, aes(x=CoffeeHouse, fill=Y)) +
+  geom_bar(position="fill")
+pg10 <- p10+g10+ plot_annotation(title = "CoffeeHouse")
+pg9 
+pg10
+```
+
+#CarryAway                       
+# p11 <- ggplot(cleaned_data, aes(x=CarryAway, fill=Y)) +
+#   geom_bar(stat="count")
+
+#RestaurantLessThan20                                
+# p12 <- ggplot(cleaned_data, aes(x=RestaurantLessThan20, fill=Y)) +
+#   geom_bar(stat="count")
+
+
+```{r echo=FALSE}   
+p13 <- ggplot(coupon_rec, aes(x=direction_same, fill=Y)) +
+  geom_bar(stat="count")
+g13 <- ggplot(coupon_rec, aes(x=direction_same, fill=Y)) +
+  geom_bar(position="fill")
+pg13 <- p13+g13+ plot_annotation(title = "Direction_same")
+```
+
+```{r echo=FALSE}   
+p14 <- ggplot(coupon_rec, aes(x=direction_opp, fill=Y)) +
+  geom_bar(stat="count")
+g14 <- ggplot(coupon_rec, aes(x=direction_opp, fill=Y)) +
+  geom_bar(position="fill")
+pg14 <- p14+g14+ plot_annotation(title = "Direction_opp")
+pg13
+pg14
+```
+Droped the variable ‘direction_opp’ that is perfectly correlated with the varible ‘direction_same’.
+```{r , echo=FALSE, , message=FALSE}
+coupon_rec <- subset(coupon_rec, select = -c(direction_opp) )
+```
+
+
+```{r echo=FALSE}   
+p15 <- ggplot(coupon_rec, aes(x=has_children, fill=Y)) +
+  geom_bar(stat="count")
+g15 <- ggplot(coupon_rec, aes(x=has_children, fill=Y)) +
+  geom_bar(position="fill")
+pg15 <- p15+g15+ plot_annotation(title = "has_children")
+pg15
+```
+
+
+## Data Modelling
+### RANDOM FOREST
+```{r message=FALSE, warning=FALSE, error=FALSE}   
+#rfData$income_factor<- NULL
+rfData <- lapply(rfData[c('gender', 'destination','passanger','weather', 'occupation','coupon')], as.factor)
+rfData <- as.data.frame(coupon_rec)
+
+
+# subseting dataset
+split_train_test  <- createDataPartition(rfData$Y, p = .67,
+                                         list = FALSE,
+                                         times = 1)
+train <- rfData[ split_train_test,]
+test  <- rfData[-split_train_test,]
+y_col <- which(colnames(test)=="Y")
+train
+
+full_rF <- randomForest(Y~.,data=train)
+full_rF
+```
+
+```{r echo=FALSE}   
+  
+# plot(full_rF$err.rate)
+plot(full_rF) # color for classes and black for OBB
+
+
+# Perform training with parameters
+rf_classifier = randomForest(Y ~., data = train, ntree=200, mtry=5, importance=TRUE)
+rf_classifier
+# plot(rf_classifier)
+varImpPlot(rf_classifier)
+```
+Most important variables: Coupon, occupation, coffee house, age, income, occupation, bar, expiration.
+
+### Model Evaluation
+```{r echo=FALSE}
+# Validation set assessment #1: looking at confusion matrix
+prediction_for_table <- predict(rf_classifier,test[,-y_col])
+# table(actual=test[,y_col],predicted=prediction_for_table)
+confusionMatrix(
+  as.factor(prediction_for_table),
+  as.factor(test$Y),
+  positive = "1" 
+  )
+```
+
+```{r message=FALSE, warning=FALSE}
+# classification perfomance
+# auc(test$Y,as.numeric(as.character(prediction_for_table)))
+test_roc = roc(test$Y , as.numeric(as.character(prediction_for_table)), plot = TRUE, print.auc = TRUE)
+```
+
+
+### XGBOOST
+Data cleaning: All categorical values has to be transformed to numerical
+```{r include=FALSE}
+train_boost <- train
+train$Y
+test_boost <- test
+```
+
+```{r include=FALSE}
+# one-hot-encoding categorical features
+ohe_feats = c('gender', 'destination','passanger','weather', 'occupation', 'coupon')
+
+#define one-hot encoding function
+dummy1 <- dummyVars(" ~ destination + passanger+ weather+ gender + occupation + coupon", data=train_boost)
+
+#perform one-hot encoding on data frame
+df_all_ohe1 <- as.data.frame(predict(dummy1, newdata = train_boost))
+
+train_boost <- cbind(train_boost[,-c(which(colnames(train_boost) %in% ohe_feats))],df_all_ohe1)
+
+
+#define one-hot encoding function
+dummy2 <- dummyVars(" ~ destination + passanger+ weather+ gender + occupation + coupon", data=test_boost)
+
+#perform one-hot encoding on data frame
+df_all_ohe2 <- as.data.frame(predict(dummy2, newdata = test_boost))
+
+test_boost <- cbind(test_boost[,-c(which(colnames(test_boost) %in% ohe_feats))],df_all_ohe2)
+
+```
+
+
+
+```{r include=FALSE}
+#Set the parameters for cross-validation and xgboost.
+#Note: This is a multi-class classification problem, and the evaluation metric is "mlogloss".
+#      The same parameters are used by Step 1 and Step 2.
+#      You can try different values for nthread, max_depth, eta, gamma, etc., and see if you get lower prediction error.
+
+param = list("objective" = "multi:softmax", # multi class classification
+	            "num_class"= 2 ,  		# Number of classes in the dependent variable.
+              "eval_metric" = "mlogloss",  	 # evaluation metric 
+              "nthread" = 8,   			 # number of threads to be used 
+              "max_depth" = 16,    		 # maximum depth of tree 
+              "eta" = 0.3,    			 # step size shrinkage 
+              "gamma" = 0,    			 # minimum loss reduction 
+              "subsample" = 0.7,    		 # part of data instances to grow tree 
+              "colsample_bytree" = 1, 		 # subsample ratio of columns when constructing each tree 
+              "min_child_weight" = 12  		 # minimum sum of instance weight needed in a child 
+              )
+
+train_boost <- lapply(train_boost, as.numeric)
+
+train_boost <- as.data.frame(train_boost)
+
+train_boost$Y
+
+#Identify the Predictors and the dependent variable, aka label.
+predictors = colnames(train_boost[,!colnames(train_boost) %in% 'Y'])
+predictors
+#xgboost works only if the labels are numeric. Hence, convert the labels (Species) to numeric.
+label = as.numeric(train_boost$Y)
+print(table (label))
+
+#Alas, xgboost works only if the numeric labels start from 0. Hence, subtract 1 from the label.
+label = as.numeric(train_boost$Y)-1
+print(table (label))
+
+```
+
+```{r echo = F}
+#########################################################################################################
+# Step 1: Run a Cross-Validation to identify the round with the minimum loss or error.
+#         Note: xgboost expects the data in the form of a numeric matrix.
+
+set.seed(100)
+
+cv.nround = 200;  # Number of rounds. This can be set to a lower or higher value, if you wish, example: 150 or 250 or 300  
+bst.cv = xgb.cv(
+        param=param,
+        data = as.matrix(train_boost[,predictors]),
+        label = label,
+        nfold = 3,
+        nrounds=cv.nround,
+        prediction=T)
+
+#Find where the minimum logloss occurred
+min.loss.idx = which.min(bst.cv$evaluation_log[, test_mlogloss_mean])
+cat ("Minimum logloss occurred in round : ", min.loss.idx, "\n")
+
+# Minimum logloss
+print(bst.cv$evaluation_log[min.loss.idx,])
+
+##############################################################################################################################
+# Step 2: Train the xgboost model using min.loss.idx found above.
+#         Note, we have to stop at the round where we get the minumum error.
+set.seed(100)
+as.matrix(train_boost[,predictors])
+bst = xgboost(
+  data = as.matrix(train_boost[,predictors]),
+  label = label,
+  nrounds=min.loss.idx)
+
+# Make prediction on the testing data.
+# test_boost <- lapply(test_boost, as.numeric)
+# test_boost <- as.data.frame(test_boost)
+# as.matrix(test_boost[,predictors])
+
+test_boost$prediction = predict(bst, as.matrix(test_boost[,predictors]))
+#Translate the prediction to the original class.
+
+test_boost$prediction = ifelse(test_boost$prediction==0,1,2)
+
+test_boost$prediction <- as.factor(test_boost$prediction)
+test_boost$Y <- as.factor(test_boost$Y)
+
+#Compute the accuracy of predictions.
+confusionMatrix(test_boost$prediction,test_boost$Y)
+
+```
+
+
+### REGRESSION TREE
+
+```{r include=FALSE}
+train_regtree <- train
+test_regtree <- test
+```
+
+
+```{r include=FALSE}
+fit1 <- rpart(data=train_regtree, Y ~ .)
+
+fitTreeParty<-as.party(fit1)
+
+plot(fitTreeParty)
+
+pred = predict(fit1, data=train_regtree)
+pred
+
+# tree.sse = sum((pred - train$Y)^2) 
+# tree.sse
+#how well did our tree do? (on test data?) 
+pred = predict(fit1, newdata=test) 
+
+# tree.sse = sum((pred - test$medv)^2) 
+# tree.sse
+
+train_regtree
+fit1$variable.importance
+barplot(fit1$variable.importance, main = "CART Variable Importance") 
+varImp(fit1) #from caret package
+
+#now for BAGGING!
+fit2 <- bagging(Y ~ ., data = train_regtree) 
+fit2
+predBag = predict(fit2, newdata=test_regtree) 
+# Bag.sse = sum((predBag - test$medv)^2) 
+# Bag.sse
+```
+
+```{r include=FALSE}
+# cp or complexity parameter determines how deep the tree will grow. Here it is assigned a small value which will allow a decesion on further pruning. That is, we want a cp value (with a more parsimonious tree) that minimizes the xerror (cross-validation error).
+fit.tree = rpart(Y ~ ., data=train_regtree, method = "class", cp=0.008)
+fit.tree
+# Visualizing the unpruned tree
+rpart.plot(fit.tree)
+# Checking the order of variable importance
+fit.tree$variable.importance
+
+
+pred.tree = predict(fit.tree, test_regtree, type = "class")
+table(pred.tree,test_regtree$Y)
+
+#plotcp(fit.tree)
+printcp(fit.tree)
+
+# Explicitly request the lowest cp value
+fit.tree$cptable[which.min(fit.tree$cptable[,"xerror"]),"CP"]
+
+
+bestcp <-fit.tree$cptable[which.min(fit.tree$cptable[,"xerror"]),"CP"]
+pruned.tree <- prune(fit.tree, cp = bestcp)
+rpart.plot(pruned.tree)
+
+
+# Alternate specification 
+pred.prune = predict(pruned.tree, test_regtree, type="class")
+table(pred.prune, test_regtree$Y)
+
+
+```
+
+
 
 
